@@ -15,14 +15,16 @@ export function enable_scrolling(): void {
 }
 
 export const OVERLAY_FOCUSABLE_SELECTOR =
-    "input, button, select, .input, .sidebar-item, .ind-tab.first, a[href], a[tabindex='0']";
+    "input, button, select, .input, .sidebar-item, .ind-tab.first, a[href], a[tabindex='0'], .overlay-message-info-box";
 
 export function get_visible_focusable_elements_in_overlay_container(
     $container: JQuery,
 ): HTMLElement[] {
     const visible_focusable_elements = [...$(OVERLAY_FOCUSABLE_SELECTOR, $container)].filter(
         (element) =>
-            element.getClientRects().length > 0 && $(element).css("visibility") !== "hidden",
+            element.getClientRects().length > 0 &&
+            $(element).css("visibility") !== "hidden" &&
+            !$(element).is(":disabled"),
     );
     return visible_focusable_elements;
 }
