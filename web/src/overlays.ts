@@ -323,4 +323,23 @@ export function trap_focus_for_settings_overlay(): void {
             }
         }
     });
+
+    // These overlays show a single list or dialog (no two-pane layout), so they
+    // share one delegated handler using the wrap_overlay_tab_focus() helper.
+    // They are rendered into their containers on open, hence the delegation on
+    // "body".
+    for (const overlay_selector of ["#draft_overlay"]) {
+        $("body").on("keydown", overlay_selector, function (this: HTMLElement, e) {
+            if (e.key !== "Tab") {
+                return;
+            }
+
+            const visible_focusable_elements =
+                overlay_util.get_visible_focusable_elements_in_overlay_container($(this));
+
+            if (overlay_util.wrap_overlay_tab_focus(e.shiftKey, visible_focusable_elements)) {
+                e.preventDefault();
+            }
+        });
+    }
 }
