@@ -85,6 +85,19 @@ run_test("is_content_editable", ({override}) => {
     assert.equal(is_content_editable(message), false);
 });
 
+run_test("editable while a previous edit is still saving", () => {
+    // A message whose previous edit is still locally echoed (awaiting
+    // server confirmation) remains editable, so the user can reopen the
+    // edit form; it shows a Saving spinner until the edit is confirmed.
+    // Unlike a message that is itself locally echoed (still being sent),
+    // which is not editable.
+    const message = {id: 55, sent_by_me: true, submessages: []};
+    assert.ok(message_edit.is_message_editable_ignoring_permissions(message));
+
+    message.locally_echoed = true;
+    assert.ok(!message_edit.is_message_editable_ignoring_permissions(message));
+});
+
 run_test("is_topic_editable", ({override}) => {
     const now = new Date();
     const current_timestamp = now / 1000;
