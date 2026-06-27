@@ -71,6 +71,15 @@ export const currently_editing_messages = new Map<number, JQuery<HTMLTextAreaEle
 const resized_edit_box_height = new Map<number, number>();
 let currently_topic_editing_message_ids: number[] = [];
 const currently_echoing_messages = new Map<number, EchoedMessageData>();
+// Stores the message IDs whose open edit form has unsaved changes that conflict
+// with an edit received from another window/client.
+const messages_with_edit_conflict = new Set<number>();
+// Tracks pending edits from this client to distinguish our own
+// update_message acknowledgements from external edits. The value is
+// whether the edit was locally echoed: a form reopened during local echo
+// stays open on acknowledgement, while a non-echoed form (e.g. one with
+// an attachment) closes, matching the original behavior.
+export const pending_edit_saves = new Map<number, boolean>();
 
 type EchoedMessageData = {
     raw_content: string;
@@ -427,6 +436,69 @@ function handle_message_edit_enter(
         composebox_typeahead.handle_enter($message_edit_content, e);
         return;
     }
+}
+
+export function handle_message_edit_update(
+    message_id: number,
+    keep_form_open: boolean,
+    old_raw_content: string | undefined,
+    new_raw_content: string | undefined,
+): void {
+    const edit_was_echoed = pending_edit_saves.get(message_id);
+    const was_our_pending_edit = pending_edit_saves.delete(message_id);
+
+    if (!keep_form_open || !currently_editing_messages.has(message_id)) {
+        // No edit form to preserve, or the message moved (its row may
+        // leave the current narrow); close/clean up the edit UI.
+        end_message_edit(message_id);
+        return;
+    }
+
+    if (was_our_pending_edit) {
+        // Acknowledgement of an edit this client originated, so it's not an
+        // external conflict. A non-echoed edit (e.g. one with an
+        // attachment) closes on acknowledgement, matching the original
+        // behavior; a form reopened during local echo stays open so a new
+        // edit in progress isn't lost.
+        if (!edit_was_echoed) {
+            end_message_edit(message_id);
+        }
+        return;
+    }
+
+    // A content-only edit arrived from another window/client while this
+    // message's edit form is open. Keep the form open: adopt the new
+    // content if the user has no unsaved changes, otherwise flag a
+    // conflict so we warn instead of discarding their in-progress edit.
+    // The form (and its preview) is rebuilt with the textarea content by
+    // the re-render that follows in message_events.update_messages, which
+    // also re-shows the warning.
+    const $textarea = currently_editing_messages.get(message_id);
+    assert($textarea !== undefined);
+    const current_content = $textarea.val() ?? "";
+
+    const has_unsaved_changes =
+        old_raw_content !== undefined && current_content !== old_raw_content;
+
+    if (has_unsaved_changes) {
+        messages_with_edit_conflict.add(message_id);
+    } else if (new_raw_content !== undefined) {
+        $textarea.val(new_raw_content);
+    }
+}
+
+function show_edit_conflict_warning($row: JQuery): void {
+    const $banner_container = compose_banner.get_compose_banner_container(
+        $row.find("textarea.message_edit_content"),
+    );
+    compose_banner.show_warning_message(
+        $t({
+            defaultMessage:
+                "You've edited this message in another window. Cancel your edits here to preserve those changes.",
+        }),
+        compose_banner.CLASSNAMES.message_edited_elsewhere,
+        $banner_container,
+    );
 }
 
 function handle_message_row_edit_escape(e: JQuery.KeyDownEvent): void {
@@ -1137,6 +1209,7 @@ export function end_message_row_edit($row: JQuery): void {
     if (message !== undefined && currently_editing_messages.has(message.id)) {
         typing.stop_message_edit_notifications(message.id);
         currently_editing_messages.delete(message.id);
+        messages_with_edit_conflict.delete(message.id);
         resized_edit_box_height.delete(message.id);
         message_lists.current.hide_edit_message($row);
         compose_call_session_manager.abandon_session(message.id.toString());
@@ -1389,6 +1462,11 @@ export async function save_message_row_edit($row: JQuery): Promise<void> {
     }
 
     assert(message !== undefined);
+    // Record this edit as in flight, with whether it was locally echoed, so
+    // the update_message event that acknowledges it is recognized as our
+    // own (see handle_message_edit_update) rather than treated as an
+    // external edit.
+    pending_edit_saves.set(message_id, edit_locally_echoed);
     void channel.patch({
         url: "/json/messages/" + message.id,
         data: request,
@@ -1414,6 +1492,10 @@ export async function save_message_row_edit($row: JQuery): Promise<void> {
         error(xhr) {
             if (msg_list === message_lists.current) {
                 message_id = rows.id($row);
+
+                // The save failed, so no acknowledgement event will clear
+                // the in-flight marker; clear it here.
+                pending_edit_saves.delete(message_id);
 
                 if (edit_locally_echoed) {
                     let echoed_message = message_store.get(message_id);
@@ -1498,6 +1580,9 @@ export function maybe_show_edit($row: JQuery, id: number): void {
         start_edit_with_content($row, $message_edit_content?.val() ?? "");
         if ($row.hasClass("show_preview")) {
             show_preview_area($row);
+        }
+        if (messages_with_edit_conflict.has(id)) {
+            show_edit_conflict_warning($row);
         }
     }
 }
