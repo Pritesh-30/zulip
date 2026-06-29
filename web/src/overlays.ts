@@ -332,6 +332,7 @@ export function trap_focus_for_settings_overlay(): void {
         "#draft_overlay",
         "#reminders-overlay",
         "#scheduled_messages_overlay",
+        "#message-history-overlay",
     ]) {
         $("body").on("keydown", overlay_selector, function (this: HTMLElement, e) {
             if (e.key !== "Tab") {
