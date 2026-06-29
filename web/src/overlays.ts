@@ -333,6 +333,7 @@ export function trap_focus_for_settings_overlay(): void {
         "#reminders-overlay",
         "#scheduled_messages_overlay",
         "#message-history-overlay",
+        "#about-zulip",
     ]) {
         $("body").on("keydown", overlay_selector, function (this: HTMLElement, e) {
             if (e.key !== "Tab") {
