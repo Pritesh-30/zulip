@@ -71,6 +71,10 @@ export const currently_editing_messages = new Map<number, JQuery<HTMLTextAreaEle
 const resized_edit_box_height = new Map<number, number>();
 let currently_topic_editing_message_ids: number[] = [];
 const currently_echoing_messages = new Map<number, EchoedMessageData>();
+// Tracks edits from this client awaiting their update_message
+// acknowledgement, so we can tell our own edit's event from an external
+// one. The value is whether the edit was locally echoed.
+export const pending_edit_echo_state = new Map<number, boolean>();
 
 type EchoedMessageData = {
     raw_content: string;
@@ -426,6 +430,42 @@ function handle_message_edit_enter(
     } else {
         composebox_typeahead.handle_enter($message_edit_content, e);
         return;
+    }
+}
+
+export function handle_message_edit_update(
+    message_id: number,
+    keep_form_open: boolean,
+    new_raw_content: string | undefined,
+): void {
+    const edit_was_echoed = pending_edit_echo_state.get(message_id);
+    const was_our_pending_edit = pending_edit_echo_state.delete(message_id);
+
+    if (!keep_form_open || !currently_editing_messages.has(message_id)) {
+        // No edit form to preserve, or the message moved (its row may
+        // leave the current narrow); close/clean up the edit UI.
+        end_message_edit(message_id);
+        return;
+    }
+
+    if (was_our_pending_edit) {
+        // Acknowledgement of an edit this client originated, so it's not an
+        // external conflict. A non-echoed edit (e.g. one with an
+        // attachment) closes on acknowledgement, matching the original
+        // behavior; a form reopened during local echo stays open so a new
+        // edit in progress isn't lost.
+        if (!edit_was_echoed) {
+            end_message_edit(message_id);
+        }
+        return;
+    }
+
+    // Another client edited this message while the form was open; update
+    // the textarea with the new content.
+    const $textarea = currently_editing_messages.get(message_id);
+    assert($textarea !== undefined);
+    if (new_raw_content !== undefined) {
+        $textarea.val(new_raw_content);
     }
 }
 
@@ -1389,6 +1429,11 @@ export async function save_message_row_edit($row: JQuery): Promise<void> {
     }
 
     assert(message !== undefined);
+    // Record this edit as in flight, with whether it was locally echoed, so
+    // the update_message event that acknowledges it is recognized as our
+    // own (see handle_message_edit_update) rather than treated as an
+    // external edit.
+    pending_edit_echo_state.set(message_id, edit_locally_echoed);
     void channel.patch({
         url: "/json/messages/" + message.id,
         data: request,
@@ -1414,6 +1459,10 @@ export async function save_message_row_edit($row: JQuery): Promise<void> {
         error(xhr) {
             if (msg_list === message_lists.current) {
                 message_id = rows.id($row);
+
+                // The save failed, so no acknowledgement event will clear
+                // the in-flight marker; clear it here.
+                pending_edit_echo_state.delete(message_id);
 
                 if (edit_locally_echoed) {
                     let echoed_message = message_store.get(message_id);

@@ -304,3 +304,59 @@ run_test("stream_and_topic_exist_in_edit_history", () => {
         false,
     );
 });
+
+run_test("handle_message_edit_update", () => {
+    // With no message list, end_message_edit() just clears the editing-map
+    // entry, which lets us observe the close-vs-keep-open decisions here.
+    const make_textarea = (initial) => {
+        let content = initial;
+        return {
+            val(new_val) {
+                if (new_val === undefined) {
+                    return content;
+                }
+                content = new_val;
+                return this;
+            },
+        };
+    };
+
+    // No edit form is open: nothing to keep in sync, no crash.
+    message_edit.handle_message_edit_update(111, true, "new");
+    assert.ok(!message_edit.currently_editing_messages.has(111));
+
+    // The message moved (keep_form_open false) while a form is open: close
+    // the form and leave its content untouched.
+    const $textarea = make_textarea("old");
+    message_edit.currently_editing_messages.set(111, $textarea);
+    message_edit.handle_message_edit_update(111, false, "new");
+    assert.ok(!message_edit.currently_editing_messages.has(111));
+    assert.equal($textarea.val(), "old");
+
+    // Content edit from another client while the form is open: adopt the
+    // new content in place, keeping the form open.
+    message_edit.currently_editing_messages.set(111, $textarea);
+    message_edit.handle_message_edit_update(111, true, "new");
+    assert.ok(message_edit.currently_editing_messages.has(111));
+    assert.equal($textarea.val(), "new");
+
+    // Acknowledgement of this client's own echoed edit whose form was
+    // reopened during local echo: the form is kept open so a new edit in
+    // progress isn't lost.
+    message_edit.currently_editing_messages.set(111, $textarea);
+    message_edit.pending_edit_echo_state.set(111, true);
+    message_edit.handle_message_edit_update(111, true, "new");
+    assert.ok(!message_edit.pending_edit_echo_state.has(111));
+    assert.ok(message_edit.currently_editing_messages.has(111));
+
+    // Acknowledgement of this client's own non-echoed edit (e.g. one with
+    // an attachment), whose form stayed open during the save: the form is
+    // closed on acknowledgement, matching the original behavior.
+    message_edit.currently_editing_messages.set(111, $textarea);
+    message_edit.pending_edit_echo_state.set(111, false);
+    message_edit.handle_message_edit_update(111, true, "new");
+    assert.ok(!message_edit.pending_edit_echo_state.has(111));
+    assert.ok(!message_edit.currently_editing_messages.has(111));
+
+    message_edit.currently_editing_messages.delete(111);
+});

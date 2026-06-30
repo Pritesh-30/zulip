@@ -160,6 +160,8 @@ def update_message_backend(
     stream_id: Json[NonNegativeInt] | None = None,
     topic_name: OptionalTopic = None,
 ) -> HttpResponse:
+    import time
+    time.sleep(5)
     updated_message_result = check_update_message(
         user_profile,
         message_id,
