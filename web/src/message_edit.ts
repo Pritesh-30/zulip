@@ -1485,22 +1485,35 @@ export async function save_message_row_edit($row: JQuery): Promise<void> {
                 pending_edit_echo_state.delete(message_id);
 
                 if (edit_locally_echoed) {
-                    let echoed_message = message_store.get(message_id);
+                    const echoed_message = message_store.get(message_id);
                     assert(echoed_message !== undefined);
                     const echo_data = currently_echoing_messages.get(message_id);
                     assert(echo_data !== undefined);
 
+                    // If an update_message event from another client arrived
+                    // while our edit was in flight, message_events cleared
+                    // local_edit_timestamp and replaced the message with that
+                    // confirmed content. Our orig_content snapshot is now
+                    // stale, so rolling back to it would clobber the other
+                    // client's confirmed edit; leave the current content in
+                    // place. We only restore the snapshot when our local echo
+                    // is still the message's current content.
+                    const superseded_by_other_client =
+                        echoed_message.local_edit_timestamp === undefined;
+
                     delete echoed_message.local_edit_timestamp;
                     currently_echoing_messages.delete(message_id);
 
-                    // Restore the original content.
-                    echoed_message = echo.edit_locally(echoed_message, {
-                        content: echo_data.orig_content,
-                        raw_content: echo_data.orig_raw_content,
-                        mentioned: echo_data.mentioned,
-                        mentioned_me_directly: echo_data.mentioned_me_directly,
-                        alerted: echo_data.alerted,
-                    });
+                    if (!superseded_by_other_client) {
+                        // Restore the original content.
+                        echo.edit_locally(echoed_message, {
+                            content: echo_data.orig_content,
+                            raw_content: echo_data.orig_raw_content,
+                            mentioned: echo_data.mentioned,
+                            mentioned_me_directly: echo_data.mentioned_me_directly,
+                            alerted: echo_data.alerted,
+                        });
+                    }
 
                     $row = message_lists.current.get_row(message_id);
                     if (!currently_editing_messages.has(message_id)) {
